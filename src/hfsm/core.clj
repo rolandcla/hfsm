@@ -29,44 +29,61 @@
         :init-st :C
         :slaves {}}}})
 
-(defn run1 [{:keys [tr-func init-st]} input-seq]
-  (reduce
-   (fn [old-st js]
-     (let [[st os] (tr-func old-st js)]
-       (println st os)
-       st))
-   init-st
-   input-seq))
 
-(defn run2 [{:keys [tr-func init-st]} input-seq]
-  (reduce
-   (fn [old-st js]
-     (let [[st os] (tr-func (first old-st) js)]
-       (println st os)
-       [st]))
-   [init-st]
-   input-seq))
+(defn divisible-by? [n d]
+  (zero? (mod n d)))
 
-(defn run3
-  ([hfsm input-seq]
-   (run3 hfsm (:init-st hfsm) input-seq))
-  ([{:keys [tr-func slaves]} init-st input-seq]
-   ;;(println "run3" init-st input-seq)
-   (reduce
-    (fn [[old-st & old-sts] js]
-      (let [[st os] (tr-func old-st js)]
-        (println st os)
-        (if-let [slave (slaves st)]
-          (cons st
-                (if (= st old-st)
-                  (run3 slave (first old-sts) [js])
-                  (run3 slave [js])))
-          [st])))
-    [init-st]
-    input-seq)))
+(defmacro new-hfsm [inputs transitions & {:keys [init-state slaves]
+                                          :or {init-state (first transitions)
+                                               slaves {}}}]
+  {:pre [(divisible-by? (count transitions) 3)]}
+  (let [tr-map (group-by first (partition 3 transitions))]
+    `{:tr-func (fn [st# {:keys ~inputs}]
+                 (or (case st#
+                       ~@(apply
+                          concat
+                          (for [[s ts] tr-map]
+                            `(~s (cond
+                                   ~@(apply
+                                      concat
+                                      (for [[_ gs os] ts]
+                                        `(~gs ~os))))))))
+                     [st# #{}])
+                 )
+      :init-st ~init-state
+      :slaves ~slaves})
+  )
 
-(defn step [{:keys [tr-func slaves]} [st & sts] js]
+(def hfsm3
+  (new-hfsm [a b]
+            [:A (and a (not b)) [:A #{:v}]
+             :A (or (not a) b)  [:B #{:u :v}]
+             :B a               [:B #{:u}]
+             :B (and (not a) b) [:A #{}]]))
+
+(def hfsm4
+  (new-hfsm [a b]
+            [:A (and a (not b)) [:A #{:v}]
+             :A (or (not a) b)  [:B #{:u :v}]
+             :B a               [:B #{:u}]
+             :B (and (not a) b) [:A #{}]]
+            :init-st :A
+            :slaves
+            {:B (new-hfsm [a b]
+                          [:C a [:D #{:v}]
+                           :D b [:C #{:v}]])}))
+
+
+;; (println (macroexpand-1
+;;           '(new-hfsm [a b]
+;;                      [:A (and a (not b)) [:A #{:v}]
+;;                       :A (or (not a) b)  [:B #{:u :v}]
+;;                       :B a               [:B #{:u}]
+;;                       :B (and (not a) b) [:A #{}]])))
+
+(defn step [{:keys [tr-func slaves] :or {slaves {}}} [st & sts] js]
   (let [[new-st os] (tr-func st js)]
+    ;;(println slaves st sts new-st os)
     (if-let [slave (slaves new-st)]
       (let [sl-sts (if (= st new-st) sts [(:init-st slave)])
             [sl-new-st sl-os] (step slave sl-sts js)]
@@ -74,7 +91,7 @@
       [[new-st] os])))
 
 
-(defn run4 [hfsm input-seq]
+(defn run [hfsm input-seq]
   (reduce (fn [st js]
             (let [[new-st os] (step hfsm st js)]
               (println new-st os)
